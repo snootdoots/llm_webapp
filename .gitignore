@@ -1,3 +1,19 @@
+docstore.sqlite*
+faiss_wiki_hnsw.index*
+progress.json*
+
+*.zim
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.lzma
+*.tar.lz
+*.tar.lz4
+*.tar.zst
+
 # Logs
 logs
 *.log

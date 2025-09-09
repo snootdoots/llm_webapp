@@ -8,12 +8,45 @@ import threading
 import os
 from database import db
 
+# ---- RAG globals ----
+from langchain_community.embeddings import OllamaEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain.chains import RetrievalQA
+from langchain.prompts import PromptTemplate
+from langchain_community.llms import Ollama as OllamaLLM
+
+VECTOR_DIR = "faiss_wiki_ar_top"
+_emb = None
+_db = None
+_retriever = None
+_llm = None
+
+RAG_PROMPT = PromptTemplate.from_template(
+    "You are a helpful assistant. Use the provided context to answer.\n"
+    "If the answer is not in the context, say you don't know.\n\n"
+    "Question: {question}\n\n"
+    "Context:\n{context}\n\n"
+    "Answer:")
+
+
+def ensure_vector_store():
+    global _emb, _db, _retriever, _llm
+    if _db is not None:
+        return True
+    # Make sure Ollama is running (you already handle this)
+    ensure_ollama_running()
+    _emb = OllamaEmbeddings(model="nomic-embed-text")
+    _db = FAISS.load_local(VECTOR_DIR, _emb, allow_dangerous_deserialization=True)
+    _retriever = _db.as_retriever(search_kwargs={"k": 5})
+    _llm = OllamaLLM(model="gemma:2b")  # or any generator you prefer
+    return True
+
 app = Flask(__name__)
 CORS(app)
 
 # Configuration
 OLLAMA_PORT = 11434
-AVAILABLE_MODELS = ["gemma:2b", "deepseek-coder:6.7b", "llama2:7b", "mistral:7b"]
+AVAILABLE_MODELS = ["gemma:2b", "deepseek-r1:32b"]
 
 def is_port_in_use(port):
     """Check if a given port is already in use."""
@@ -157,6 +190,51 @@ def update_conversation_title(conversation_id):
             return jsonify({'error': 'Title is required'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/search', methods=['POST'])
+def semantic_search():
+    data = request.json
+    query = data.get('query', '')
+    k = int(data.get('k', 5))
+    if not query:
+        return jsonify({'error': 'No query provided'}), 400
+    ensure_vector_store()
+    results = _retriever.get_relevant_documents(query)[:k]
+    return jsonify({
+        'results': [
+            {
+                'title': r.metadata.get('title', ''),
+                'snippet': r.page_content[:500]
+            } for r in results
+        ]
+    })
+
+@app.route('/api/rag', methods=['POST'])
+def rag_answer():
+    data = request.json
+    question = data.get('question', '')
+    k = int(data.get('k', 5))
+    if not question:
+        return jsonify({'error': 'No question provided'}), 400
+
+    ensure_vector_store()
+
+    # Retrieve docs first so we can return sources
+    docs = _retriever.get_relevant_documents(question)[:k]
+    context = "\n\n".join(d.page_content[:1200] for d in docs)
+
+    # Simple “stuffing” call
+    prompt = RAG_PROMPT.format(question=question, context=context)
+    out = _llm.invoke(prompt)
+
+    return jsonify({
+        'answer': out,
+        'sources': [
+            {'title': d.metadata.get('title',''), 'snippet': d.page_content[:300]}
+            for d in docs
+        ]
+    })
+
 
 if __name__ == '__main__':
     # Try to start Ollama server on startup

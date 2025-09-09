@@ -1,0 +1,22 @@
+#!/bin/zsh
+
+eval "$(conda shell.zsh hook)"
+
+ENV_NAME="llm-webapp"
+if ! conda env list | grep -q "$ENV_NAME"; then
+    echo "Creating conda environment: $ENV_NAME"
+    conda create -y -n $ENV_NAME python=3.11
+fi
+
+conda activate $ENV_NAME
+
+if [ -f requirements.txt ]; then
+    echo "Installing Python requirements..."
+    pip install -r requirements.txt
+fi
+
+echo "Starting backend (Flask)..."
+python backend.py &
+
+echo "Starting frontend (Vite)..."
+npm run dev

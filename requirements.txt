@@ -1,3 +1,17 @@
-flask==3.0.0
-flask-cors==4.0.0
-ollama==0.1.7
+# Core web backend
+flask
+flask-cors
+
+# ZIM file reading
+libzim
+beautifulsoup4
+
+# LLM / RAG stack
+langchain>=0.2
+langchain-community
+faiss-cpu      # vector store
+chromadb       # optional alternative to FAISS
+tiktoken       # for token counting (optional)
+
+# Utilities
+tqdm

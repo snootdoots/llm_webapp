@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
-import { Send, Bot, User, RefreshCw, Settings, CheckCircle, AlertCircle } from 'lucide-react'
+import { Send, Bot, User, RefreshCw, Settings, CheckCircle, AlertCircle, BookOpen } from 'lucide-react'
 import './App.css'
 
 interface Message {
   role: 'user' | 'assistant'
   content: string
   timestamp: Date
+  sources?: Array<{title: string, snippet: string}> // Add sources for RAG responses
 }
 
 interface Model {
@@ -40,6 +41,7 @@ function App() {
   const [showSidebar, setShowSidebar] = useState(false)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [currentConversationId, setCurrentConversationId] = useState<number | null>(null)
+  const [useRAG, setUseRAG] = useState(false) // Add RAG toggle state
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -151,38 +153,69 @@ function App() {
     setIsLoading(true)
 
     try {
-      // Call the backend API to get response from Ollama
-      const response = await fetch('http://localhost:5001/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: selectedModel.id,
-          prompt: inputValue,
-          conversation_id: currentConversationId
-        }),
-      })
+      let data;
       
-      const data = await response.json()
-      
-      if (data.error) {
-        throw new Error(data.error)
-      }
-      
-      const assistantMessage: Message = {
-        role: 'assistant',
-        content: data.response,
-        timestamp: new Date()
-      }
+      if (useRAG) {
+        // Use RAG endpoint for Wikipedia-enhanced responses
+        const response = await fetch('http://localhost:5001/api/rag', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            question: inputValue,
+            k: 5
+          }),
+        })
+        
+        data = await response.json()
+        
+        if (data.error) {
+          throw new Error(data.error)
+        }
+        
+        const assistantMessage: Message = {
+          role: 'assistant',
+          content: data.answer,
+          timestamp: new Date(),
+          sources: data.sources
+        }
 
-      setMessages(prev => [...prev, assistantMessage])
-      
-      // Update conversation ID if this was a new conversation
-      if (data.conversation_id && !currentConversationId) {
-        setCurrentConversationId(data.conversation_id)
-        // Reload conversations to show the new one
-        loadConversations()
+        setMessages(prev => [...prev, assistantMessage])
+      } else {
+        // Use regular chat endpoint
+        const response = await fetch('http://localhost:5001/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: selectedModel.id,
+            prompt: inputValue,
+            conversation_id: currentConversationId
+          }),
+        })
+        
+        data = await response.json()
+        
+        if (data.error) {
+          throw new Error(data.error)
+        }
+        
+        const assistantMessage: Message = {
+          role: 'assistant',
+          content: data.response,
+          timestamp: new Date()
+        }
+
+        setMessages(prev => [...prev, assistantMessage])
+        
+        // Update conversation ID if this was a new conversation
+        if (data.conversation_id && !currentConversationId) {
+          setCurrentConversationId(data.conversation_id)
+          // Reload conversations to show the new one
+          loadConversations()
+        }
       }
     } catch (error) {
       const errorMessage: Message = {
@@ -223,6 +256,16 @@ function App() {
             <h1>🤖 LLM Chat</h1>
           </div>
           <div className="header-right">
+            <div className="rag-toggle">
+              <button
+                className={`rag-button ${useRAG ? 'active' : ''}`}
+                onClick={() => setUseRAG(!useRAG)}
+                title={useRAG ? 'Disable Wikipedia RAG' : 'Enable Wikipedia RAG'}
+              >
+                <BookOpen size={16} />
+                <span>Wikipedia RAG</span>
+              </button>
+            </div>
             <div className={`server-status ${isServerRunning ? 'running' : 'stopped'}`}>
               {isServerRunning ? (
                 <>
@@ -313,6 +356,22 @@ function App() {
                   </div>
                   <div className="message-content">
                     <div className="message-text">{message.content}</div>
+                    {message.sources && message.sources.length > 0 && (
+                      <div className="message-sources">
+                        <div className="sources-header">
+                          <BookOpen size={14} />
+                          <span>Sources:</span>
+                        </div>
+                        <div className="sources-list">
+                          {message.sources.map((source, sourceIndex) => (
+                            <div key={sourceIndex} className="source-item">
+                              <div className="source-title">{source.title}</div>
+                              <div className="source-snippet">{source.snippet}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <div className="message-timestamp">
                       {message.timestamp.toLocaleTimeString()}
                     </div>
@@ -348,7 +407,7 @@ function App() {
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyPress={handleKeyPress}
-                placeholder={`Ask ${selectedModel.name} anything...`}
+                placeholder={useRAG ? `Ask with Wikipedia knowledge...` : `Ask ${selectedModel.name} anything...`}
                 disabled={isLoading || !isServerRunning}
                 rows={1}
                 className="message-input"
